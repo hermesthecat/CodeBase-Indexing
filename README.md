@@ -4,9 +4,7 @@ Qwen3-embedding has topped embedding benchmarks, easily beating both open and cl
 
 **🎯 Fully RooCode Compatible!** - Works seamlessly with [Cline](https://github.com/cline/cline) and its tributaries including Roo, KiloCode.
 
-## Quick Start
-
-**Automated Setup (Recommended)**
+## Automated Setup (Recommended)
 
 ```bash
 # One-command setup: downloads model, optimizes, and configures everything
@@ -21,7 +19,7 @@ This automated script:
 - Installs Python dependencies and starts all services
 - Sets up Qdrant vector database with proper configuration
 
-**Manual Setup (Advanced Users)**
+## Manual Setup (Advanced Users)
 
 ```bash
 # 1. Download and optimize Qwen3 model (0.6b:Q8 recommended, 4B:Q4 best)
