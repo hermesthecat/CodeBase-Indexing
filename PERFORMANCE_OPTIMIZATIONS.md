@@ -36,8 +36,8 @@ Büyük hacimli verileri Qdrant'a eklerken en büyük darboğaz, her bir belge i
 
 ## Uygulama Önceliği
 
-| Öneri | Etki Alanı | Getireceği Performans Kazancı | Uygulama Önceliği |
-| :--- | :--- | :--- | :--- |
-| Asenkron API & Paralel İşleme | API Sunucusu | **Çok Yüksek** | **Yüksek** |
-| Toplu Embedding Alımı | Veri İndeksleme | **Çok Yüksek** | **Yüksek** |
-| Bellek-içi Önbellek | API Sunucusu | **Orta** | Orta |
+| Öneri | Etki Alanı | Getireceği Performans Kazancı | Uygulama Önceliği | Durum |
+| :--- | :--- | :--- | :--- | :--- |
+| Asenkron API & Paralel İşleme | API Sunucusu | **Çok Yüksek** | **Yüksek** | ✅ Tamamlandı |
+| Toplu Embedding Alımı | Veri İndeksleme | **Çok Yüksek** | **Yüksek** | ✅ Tamamlandı |
+| Bellek-içi Önbellek | API Sunucusu | **Orta** | Orta | ✅ Tamamlandı |

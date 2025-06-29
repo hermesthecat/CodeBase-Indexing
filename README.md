@@ -163,6 +163,26 @@ curl http://localhost:11434/api/tags   # List Ollama models
 
 ## Performance Features
 
+### High-Throughput Architecture
+
+The API and data indexing scripts are designed for maximum performance in high-concurrency environments:
+
+🚀 **Asynchronous API & Parallel Processing**
+
+- The FastAPI-based server (`qwen3-api.py`) is fully asynchronous.
+- It can handle hundreds of concurrent requests efficiently.
+- Batch requests are processed in parallel using `asyncio.gather`, dramatically reducing latency for bulk operations.
+
+⚡ **In-Memory Caching**
+
+- Frequently requested embeddings are cached in memory (`cachetools.TTLCache`).
+- This reduces redundant calls to the Ollama model, providing millisecond response times for repeated queries.
+
+📦 **Optimized Batch Indexing**
+
+- The `qdrantsetup.py` script sends documents to the embedding API in optimized batches.
+- This minimizes the number of HTTP requests, significantly speeding up the process of indexing large datasets.
+
 ### Qwen Developer Recommendations (Implemented)
 
 🚀 **Instruction-Aware Embedding**  
