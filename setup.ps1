@@ -188,8 +188,7 @@ Write-Host "✅ Qdrant vector store configured"
 
 # Step 6: Run verification tests
 Write-Host "📦 Step 6: Running verification tests..."
-# Note: Original script had 'test_setup.py', corrected to 'test_qwen_features.py'
-python test_qwen_features.py
+python test_setup.py
 
 # Summary
 Write-Host ""

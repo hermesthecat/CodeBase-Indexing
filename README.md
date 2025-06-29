@@ -6,77 +6,53 @@ Qwen3-embedding has topped embedding benchmarks, easily beating both open and cl
 
 ## Automated Setup (Recommended)
 
-The setup scripts (`setup.sh` for Linux/macOS, `setup.ps1` for Windows) automate the entire process.
+The entire environment can be managed using Docker Compose, which is the simplest and recommended method.
 
-1. **Configure Environment:**
-    - The script will automatically create a `.env` file from the `.env.example` template if it doesn't exist.
-    - **Before running the script**, you can review and edit the `.env` file to customize ports, API keys, etc.
+1. **Configure Your Environment:**
+    - If it doesn't exist, a `.env` file will be created from the `.env.example` template when you first run the setup.
+    - Review and edit the `.env` file to customize ports, API keys, or model names.
 
-2. **Run the Script:**
-
-    For Linux or macOS:
-
-    ```bash
-    # One-command setup: downloads model, optimizes, and configures everything
-    ./setup.sh
-    ```
-
-    For Windows (in PowerShell):
-
-    ```powershell
-    # Make sure execution policy allows running scripts
-    # Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-    .\setup.ps1
-    ```
-
-This automated script:
-
-- Downloads Qwen3-Embedding-0.6B model (Q8_0-optimized) via Ollama
-- Extracts and optimizes the GGUF model from Ollama storage  
-- Creates optimized Ollama model for embedding-only usage
-- Installs Python dependencies from `requirements.txt`
-- Starts all services (Qdrant, API) using the configuration from your `.env` file.
-- Sets up the Qdrant vector database with the correct configuration.
-
-## Manual Setup (Advanced Users)
-
-1. **Create Configuration File:**
-    - Copy `.env.example` to `.env`.
-    - Edit the `.env` file with your desired settings (API keys, ports, etc.).
-
-2. **Download and Optimize Model:**
+2. **Download and Optimize the AI Model:**
+    - The AI model runs on your local machine using Ollama, not inside Docker. This setup provides better performance, especially on macOS.
+    - Run the `optimize_gguf.py` script once to download and prepare the model for the API.
 
     ```bash
-    # Pull the recommended model
+    # Pull the recommended base model from Ollama Hub
     ollama pull hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0
     
-    # Run the optimizer script to create the local model
+    # Run the optimizer script to create the local model file
+    # This creates the .gguf file that the API service in Docker will use
     python optimize_gguf.py hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0 qwen3-embedding
     ```
 
-3. **Install Dependencies and Start Services:**
+3. **Launch Services with Docker Compose:**
+    - This single command will build the API container, start the Qdrant database, and connect everything.
 
     ```bash
-    # Install dependencies
-    pip install -r requirements.txt
-    
-    # Start Qdrant using Docker (it will read the API key from your .env file)
-    docker run -d --name qdrant -p 6333:6333 \
-      -e QDRANT__SERVICE__API_KEY=$(grep QDRANT_API_KEY .env | cut -d '=' -f2) \
-      -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
-    
-    # Start the API (it will read settings from your .env file)
-    python qwen3-api.py
+    docker-compose up --build
     ```
 
-4. **Setup Vector Database:**
+    - To run in the background, add the `-d` flag: `docker-compose up --build -d`.
+
+4. **Initialize the Vector Database:**
+    - With the services running, run the `qdrantsetup.py` script once to create and configure the collection.
 
     ```bash
-    # This script also reads from .env to connect to the services
     python qdrantsetup.py
     ```
 
-**Ready to use with RooCode!** The setup script displays the exact configuration values needed.
+5. **(Optional) Run End-to-End Tests:**
+    - Verify that everything is working correctly.
+
+    ```bash
+    python test_setup.py
+    ```
+
+**To Stop Services:**
+
+```bash
+docker-compose down
+```
 
 This setup provides a complete, optimized embedding pipeline with **Qwen developer recommendations**:
 
@@ -87,6 +63,19 @@ This setup provides a complete, optimized embedding pipeline with **Qwen develop
 - **Optimized Qdrant Vector Store**: `qdrantsetup.py` with performance tuning for 1024-dimensional vectors
 - **Task-Specific Templates**: Code search, document retrieval, Q&A, clustering, and more
 - **Complete RooCode Integration**: Ready-to-use with proper API keys and endpoints
+
+## Manual Setup (Legacy)
+
+The original setup scripts (`setup.sh`, `setup.ps1`) are still available for those who prefer not to use Docker Compose. They handle the same steps of downloading the model, starting a standalone Qdrant container, and running the Python services directly.
+
+```bash
+# For Linux/macOS
+./setup.sh
+
+# For Windows (in PowerShell)
+# Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+./setup.ps1
+```
 
 ## Services
 
@@ -262,6 +251,12 @@ The API and data indexing scripts are designed for maximum performance in high-c
 
 ## Troubleshooting
 
+**Docker Compose Issues:**
+
+- Ensure Docker Desktop is running.
+- Check that the ports defined in your `.env` file are not already in use on your machine.
+- View logs for a specific service: `docker-compose logs -f api` or `docker-compose logs -f qdrant`.
+
 **Ollama model not found:**
 
 ```bash
@@ -298,12 +293,12 @@ docker restart qdrant
 ### Logs and Debugging
 
 ```bash
-# Check API logs (run in foreground to see live output)
-python qwen3-api.py
+# Check API logs
+docker-compose logs -f api
 
 # Check Qdrant logs
-docker logs qdrant
+docker-compose logs -f qdrant
 
-# Check Ollama logs
-ollama logs qwen3-embedding
+# Check Ollama logs (if running as a service)
+# systemctl status ollama
 ```
