@@ -5,6 +5,7 @@ Enhanced configuration for maximum performance with 1024-dimensional vectors
 RooCode-compatible with API key support
 """
 
+import os
 import requests
 import time
 from typing import List, Dict, Any, Optional
@@ -16,6 +17,10 @@ from qdrant_client.http.models import (
 import uuid
 import logging
 import httpx
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,11 +37,16 @@ class OptimizedQdrantVectorStore:
     
     def __init__(
         self, 
-        qdrant_url: str = "http://localhost:6333",
-        qdrant_api_key: str = "your-super-secret-qdrant-api-key",
-        embedding_api_url: str = "http://localhost:8000",
+        qdrant_url: Optional[str] = None,
+        qdrant_api_key: Optional[str] = None,
+        embedding_api_url: Optional[str] = None,
         collection_name: str = "qwen3_embedding"
     ):
+        # Get configuration from environment variables with sensible defaults
+        qdrant_url = qdrant_url or os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = qdrant_api_key or os.getenv("QDRANT_API_KEY", "your-super-secret-qdrant-api-key")
+        self.embedding_api_url = embedding_api_url or os.getenv("EMBEDDING_API_URL", "http://localhost:8000")
+        
         # Initialize Qdrant client with API key
         # Note: Using HTTP for local development - consider HTTPS for production
         self.qdrant = QdrantClient(
@@ -45,7 +55,6 @@ class OptimizedQdrantVectorStore:
             # Suppress SSL warnings for local development
             verify=False if "localhost" in qdrant_url else True
         )
-        self.embedding_api_url = embedding_api_url
         self.collection_name = collection_name
         self.vector_size = 1024  # Qwen3-0.6B embedding size
         self.client = httpx.Client(timeout=60.0) # Use a synchronous client for this script
@@ -384,11 +393,12 @@ if __name__ == "__main__":
     print("🚀 Starting Optimized Qdrant Vector Store Setup for RooCode")
     print("=" * 60)
     
-    # Initialize optimized vector store with RooCode compatibility
+    # Initialize optimized vector store using environment variables
+    # The script will automatically pick up settings from the .env file
     vs = OptimizedQdrantVectorStore()
     
     # Test embedding API connectivity first
-    print("\n🔌 Testing embedding API connectivity...")
+    print(f"\n🔌 Testing embedding API connectivity at {vs.embedding_api_url}...")
     try:
         # Test with the new batch method
         test_embedding_batch = vs.get_embeddings_batch(["test connection"])
@@ -399,7 +409,7 @@ if __name__ == "__main__":
             print(f"⚠️  Warning: Vector size mismatch!")
     except Exception as e:
         print(f"❌ Embedding API connection failed: {e}")
-        print("   Make sure the Qwen3 API is running on http://localhost:8000")
+        print(f"   Make sure the Qwen3 API is running on {vs.embedding_api_url}")
         exit(1)
     
     # Create collection with optimizations
@@ -529,4 +539,4 @@ if __name__ == "__main__":
     print(f"\n💡 To use with RooCode:")
     print(f"   1. Set embedding API URL to: {vs.embedding_api_url}")
     print(f"   2. Set Qdrant collection to: {vs.collection_name}")
-    print(f"   3. Ensure API key matches: your-super-secret-qdrant-api-key")
+    print(f"   3. Ensure API key matches the one in your .env file")

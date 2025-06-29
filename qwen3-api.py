@@ -5,6 +5,7 @@ Optimized for lightweight, high-throughput embedding tasks with 1024 dimensions.
 Now with async processing and in-memory caching for superior performance.
 """
 
+import os
 import time
 from typing import List, Dict, Any, Optional, Union
 import numpy as np
@@ -16,14 +17,18 @@ import uvicorn
 import httpx
 import hashlib
 import json
-import os
 import asyncio
 from cachetools import TTLCache
+from dotenv import load_dotenv
 
-# Universal Configuration with Developer Recommendations
+# Load environment variables from .env file
+load_dotenv()
+
+# --- Universal Configuration with Developer Recommendations ---
+# Model configuration is now more descriptive and centrally managed.
 MODEL_CONFIG = {
-    "model_name": "qwen3-embedding",  # Local optimized model, served by Ollama. don't add the :latest suffix
-    "dimensions": 1024,
+    "model_name": os.getenv("OLLAMA_MODEL_NAME", "qwen3-embedding"), # Local optimized model name
+    "dimensions": int(os.getenv("EMBEDDING_DIMENSIONS", 1024)),
     "max_context_length": 32768,
     "temperature": 0.0,
     "supports_instructions": True,
@@ -78,8 +83,8 @@ class Qwen3_0_6B_EmbeddingAPI:
     Features async request handling, parallel batch processing, and in-memory caching.
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: Optional[str] = None):
+        self.ollama_url = ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.model_name = MODEL_CONFIG["model_name"]
         self.dimensions = MODEL_CONFIG["dimensions"]
         # Use a thread-safe in-memory cache with a 10-minute TTL and max size of 10,000 items
@@ -336,7 +341,8 @@ async def health_check():
         response.raise_for_status()
         
         models = response.json().get("models", [])
-        model_available = any(m["name"] == embedding_api.model_name for m in models)
+        # Check if model name (without tag) is in the list of available models
+        model_available = any(m["name"].split(':')[0] == embedding_api.model_name for m in models)
         
         return {
             "status": "healthy",
@@ -432,4 +438,8 @@ if __name__ == "__main__":
     print(f"   GET /v1/models")
     print(f"   GET /health")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", timeout_keep_alive=60)
+    # Load host and port from environment variables with defaults
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("API_PORT", 8000))
+    
+    uvicorn.run(app, host=host, port=port, log_level="info", timeout_keep_alive=60)

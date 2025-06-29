@@ -14,6 +14,23 @@ if [ ! -f "requirements.txt" ]; then
     exit 1
 fi
 
+# Check for .env file and create from example if it doesn't exist
+if [ ! -f ".env" ]; then
+    echo "🔍 .env file not found. Creating from .env.example..."
+    if [ ! -f ".env.example" ]; then
+        echo "❌ .env.example not found! Cannot create .env file."
+        exit 1
+    fi
+    cp .env.example .env
+    echo "✅ .env file created. Please review and edit it if necessary."
+fi
+
+# Load environment variables
+echo "📦 Loading configuration from .env file..."
+set -o allexport
+source .env
+set +o allexport
+
 # Check if ollama is available
 if ! command -v ollama &> /dev/null; then
     echo "❌ Ollama not found! Please install Ollama first:"
@@ -38,7 +55,7 @@ if [ ! -f "qwen3-embedding-0.6b.gguf" ]; then
     fi
     
     # Run GGUF optimizer to extract and optimize the model
-    echo "� Optimizing GGUF model from Ollama storage..."
+    echo "🔧 Optimizing GGUF model from Ollama storage..."
     if python optimize_gguf.py hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0 qwen3-embedding; then
         echo "✅ GGUF model optimized successfully"
     else
@@ -91,12 +108,12 @@ if docker ps -a --format 'table {{.Names}}' | grep -q "qdrant"; then
     docker rm qdrant || true
 fi
 
-# Start new Qdrant container
+# Start new Qdrant container using API key from .env file
 echo "Starting Qdrant container..."
 docker run -d --name qdrant \
     -p 6333:6333 \
     -p 6334:6334 \
-    -e QDRANT__SERVICE__API_KEY="your-super-secret-qdrant-api-key" \
+    -e QDRANT__SERVICE__API_KEY="$QDRANT_API_KEY" \
     -v "$(pwd)/qdrant_storage:/qdrant/storage" \
     qdrant/qdrant
 
@@ -149,12 +166,12 @@ echo "🎉 Setup complete! Your Qwen3 embedding system is ready for Roo Code."
 echo ""
 echo "🔧 Roo Code Configuration:"
 echo "   Embeddings Provider: OpenAI-compatible"
-echo "   Base URL: http://localhost:8000"
-echo "   API Key: your-super-secret-qdrant-api-key"
+echo "   Base URL: $EMBEDDING_API_URL"
+echo "   API Key: $QDRANT_API_KEY"
 echo "   Model: qwen3"
 echo "   Embedding Dimension: 1024"
-echo "   Qdrant URL: http://localhost:6333"
-echo "   Qdrant API Key: your-super-secret-qdrant-api-key"
+echo "   Qdrant URL: $QDRANT_URL"
+echo "   Qdrant API Key: $QDRANT_API_KEY"
 echo "   Collection Name: qwen3_embedding"
 echo ""
 echo "🚀 Services running:"

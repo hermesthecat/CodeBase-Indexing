@@ -14,6 +14,40 @@ if (-not (Test-Path "requirements.txt")) {
     exit 1
 }
 
+# Check for .env file and create from example if it doesn't exist
+if (-not (Test-Path ".env")) {
+    Write-Host "🔍 .env file not found. Creating from .env.example..."
+    if (-not (Test-Path ".env.example")) {
+        Write-Host "❌ .env.example not found! Cannot create .env file."
+        exit 1
+    }
+    Copy-Item -Path ".env.example" -Destination ".env"
+    Write-Host "✅ .env file created. Please review and edit it if necessary."
+}
+
+# Load environment variables from .env file
+Write-Host "📦 Loading configuration from .env file..."
+try {
+    Get-Content .env | ForEach-Object {
+        if ($_ -match "^\s*#") { return } # Skip comments
+        $parts = $_.Split("=", 2)
+        if ($parts.Length -eq 2) {
+            $key = $parts[0].Trim()
+            $value = $parts[1].Trim()
+            # Remove quotes if present
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            [System.Environment]::SetEnvironmentVariable($key, $value)
+            # Also set for the current session for immediate use
+            $env:$key = $value
+        }
+    }
+} catch {
+    Write-Host "❌ Failed to load environment variables from .env: $_"
+    exit 1
+}
+
 # Check if ollama is available
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     Write-Host "❌ Ollama not found! Please install Ollama first."
@@ -98,13 +132,13 @@ if ($existingContainer) {
     docker rm qdrant
 }
 
-# Start new Qdrant container
+# Start new Qdrant container using API key from environment
 Write-Host "Starting Qdrant container..."
 # Using ${PWD} which is a cross-platform way to define the volume in PowerShell
 docker run -d --name qdrant `
     -p 6333:6333 `
     -p 6334:6334 `
-    -e QDRANT__SERVICE__API_KEY="your-super-secret-qdrant-api-key" `
+    -e "QDRANT__SERVICE__API_KEY=$($env:QDRANT_API_KEY)" `
     -v "${PWD}/qdrant_storage:/qdrant/storage" `
     qdrant/qdrant
 
@@ -163,12 +197,12 @@ Write-Host "🎉 Setup complete! Your Qwen3 embedding system is ready for RooCod
 Write-Host ""
 Write-Host "🔧 RooCode Configuration:"
 Write-Host "   Embeddings Provider: OpenAI-compatible"
-Write-Host "   Base URL: http://localhost:8000"
-Write-Host "   API Key: your-super-secret-qdrant-api-key"
+Write-Host "   Base URL: $($env:EMBEDDING_API_URL)"
+Write-Host "   API Key: $($env:QDRANT_API_KEY)"
 Write-Host "   Model: qwen3-embedding"
 Write-Host "   Embedding Dimension: 1024"
-Write-Host "   Qdrant URL: http://localhost:6333"
-Write-Host "   Qdrant API Key: your-super-secret-qdrant-api-key"
+Write-Host "   Qdrant URL: $($env:QDRANT_URL)"
+Write-Host "   Qdrant API Key: $($env:QDRANT_API_KEY)"
 Write-Host "   Collection Name: qwen3_embedding"
 Write-Host ""
 Write-Host "🚀 Services running:"

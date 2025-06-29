@@ -6,32 +6,71 @@ Qwen3-embedding has topped embedding benchmarks, easily beating both open and cl
 
 ## Automated Setup (Recommended)
 
-```bash
-# One-command setup: downloads model, optimizes, and configures everything
-./setup.sh
-```
+The setup scripts (`setup.sh` for Linux/macOS, `setup.ps1` for Windows) automate the entire process.
+
+1.  **Configure Environment:**
+    - The script will automatically create a `.env` file from the `.env.example` template if it doesn't exist.
+    - **Before running the script**, you can review and edit the `.env` file to customize ports, API keys, etc.
+
+2.  **Run the Script:**
+
+    For Linux or macOS:
+    ```bash
+    # One-command setup: downloads model, optimizes, and configures everything
+    ./setup.sh
+    ```
+
+    For Windows (in PowerShell):
+    ```powershell
+    # Make sure execution policy allows running scripts
+    # Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    .\setup.ps1
+    ```
 
 This automated script:
 
 - Downloads Qwen3-Embedding-0.6B model (Q8_0-optimized) via Ollama
 - Extracts and optimizes the GGUF model from Ollama storage  
 - Creates optimized Ollama model for embedding-only usage
-- Installs Python dependencies and starts all services
-- Sets up Qdrant vector database with proper configuration
+- Installs Python dependencies from `requirements.txt`
+- Starts all services (Qdrant, API) using the configuration from your `.env` file.
+- Sets up the Qdrant vector database with the correct configuration.
 
 ## Manual Setup (Advanced Users)
 
-```bash
-# 1. Download and optimize Qwen3 model (0.6b:Q8 recommended, 4B:Q4 best)
-ollama pull hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0
-python optimize_gguf.py hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0 qwen3-embedding
+1.  **Create Configuration File:**
+    - Copy `.env.example` to `.env`.
+    - Edit the `.env` file with your desired settings (API keys, ports, etc.).
 
-# 2. Install dependencies and start services
-pip install -r requirements.txt
-docker run -d --name qdrant -p 6333:6333 -e QDRANT__SERVICE__API_KEY="your-super-secret-qdrant-api-key" -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
-python qdrantsetup.py
-python qwen3-api.py
-```
+2.  **Download and Optimize Model:**
+    ```bash
+    # Pull the recommended model
+    ollama pull hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0
+    
+    # Run the optimizer script to create the local model
+    python optimize_gguf.py hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0 qwen3-embedding
+    ```
+
+3.  **Install Dependencies and Start Services:**
+    ```bash
+    # Install dependencies
+    pip install -r requirements.txt
+    
+    # Start Qdrant using Docker (it will read the API key from your .env file)
+    docker run -d --name qdrant -p 6333:6333 \
+      -e QDRANT__SERVICE__API_KEY=$(grep QDRANT_API_KEY .env | cut -d '=' -f2) \
+      -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
+    
+    # Start the API (it will read settings from your .env file)
+    python qwen3-api.py
+    ```
+
+4.  **Setup Vector Database:**
+    ```bash
+    # This script also reads from .env to connect to the services
+    python qdrantsetup.py
+    ```
+
 
 **Ready to use with RooCode!** The setup script displays the exact configuration values needed.
 
@@ -47,16 +86,18 @@ This setup provides a complete, optimized embedding pipeline with **Qwen develop
 
 ## Services
 
+The services will run on the ports defined in your `.env` file. Defaults are:
+
 - **Qwen3-0.6B API**: `http://localhost:8000` (Custom FastAPI wrapper, RooCode Compatible)
 - **Qdrant Vector DB**: `http://localhost:6333` (Docker container with optimizations)
 - **Ollama**: `http://localhost:11434` (Serving optimized GGUF model)
 
 ## RooCode Integration
 
-After running the setup script, you'll see the exact configuration values needed for RooCode integration:
+After running the setup script, you'll see the exact configuration values needed for RooCode integration, based on your `.env` file:
 
 ```yaml
-# RooCode Configuration (displayed by setup script)
+# RooCode Configuration (values from your .env file)
 Embeddings Provider: OpenAI-compatible
 Base URL: http://localhost:8000
 API Key: your-super-secret-qdrant-api-key
@@ -69,7 +110,7 @@ Qdrant API Key: your-super-secret-qdrant-api-key
 Collection Name: qwen3_embedding
 ```
 
-Simply copy these values into your RooCode settings after running `./setup.sh`.
+Simply copy these values into your RooCode settings.
 
 ## Usage Examples
 
@@ -253,8 +294,8 @@ docker restart qdrant
 ### Logs and Debugging
 
 ```bash
-# Check API logs
-python qwen3-api.py  # Run in foreground to see logs
+# Check API logs (run in foreground to see live output)
+python qwen3-api.py
 
 # Check Qdrant logs
 docker logs qdrant
