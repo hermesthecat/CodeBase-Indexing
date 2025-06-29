@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 OpenAI-Compatible API Wrapper for Qwen3-Embedding-0.6B
-Optimized for lightweight embedding tasks with 1024 dimensions
+Optimized for lightweight, high-throughput embedding tasks with 1024 dimensions.
+Now with async processing and in-memory caching for superior performance.
 """
 
 import time
@@ -12,10 +13,12 @@ import base64
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
-import requests
+import httpx
 import hashlib
 import json
 import os
+import asyncio
+from cachetools import TTLCache
 
 # Universal Configuration with Developer Recommendations
 MODEL_CONFIG = {
@@ -70,38 +73,25 @@ class EmbeddingResponse(BaseModel):
     usage: Usage
 
 class Qwen3_0_6B_EmbeddingAPI:
-    """Qwen3-Embedding-0.6B API wrapper with optimal configurations"""
+    """
+    Asynchronous Qwen3-Embedding-0.6B API wrapper with optimal configurations.
+    Features async request handling, parallel batch processing, and in-memory caching.
+    """
     
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.ollama_url = ollama_url
         self.model_name = MODEL_CONFIG["model_name"]
         self.dimensions = MODEL_CONFIG["dimensions"]
-        self.cache_dir = "embedding_cache_0_6b"
-        os.makedirs(self.cache_dir, exist_ok=True)
-        
-    def _get_cache_key(self, text: str) -> str:
-        """Generate cache key for text"""
-        return hashlib.md5(f"{self.model_name}:{text}".encode()).hexdigest()
-    
-    def _save_to_cache(self, cache_key: str, embedding: List[float]):
-        """Save embedding to cache"""
-        cache_path = os.path.join(self.cache_dir, f"{cache_key}.json")
-        try:
-            with open(cache_path, 'w') as f:
-                json.dump(embedding, f)
-        except Exception:
-            pass  # Cache errors shouldn't break the API
-    
-    def _load_from_cache(self, cache_key: str) -> Optional[List[float]]:
-        """Load embedding from cache"""
-        cache_path = os.path.join(self.cache_dir, f"{cache_key}.json")
-        try:
-            if os.path.exists(cache_path):
-                with open(cache_path, 'r') as f:
-                    return json.load(f)
-        except Exception:
-            pass
-        return None
+        # Use a thread-safe in-memory cache with a 10-minute TTL and max size of 10,000 items
+        self.cache = TTLCache(maxsize=10000, ttl=600)
+        # Use a persistent httpx client for connection pooling
+        self.client = httpx.AsyncClient(timeout=30.0)
+
+    def _get_cache_key(self, text: str, task: str, custom_instruction: Optional[str], target_dimensions: Optional[int]) -> str:
+        """Generate a unique cache key for a specific request configuration."""
+        # Include all relevant parameters in the hash to ensure correctness
+        payload = f"{self.model_name}:{text}:{task}:{custom_instruction}:{target_dimensions}"
+        return hashlib.md5(payload.encode()).hexdigest()
     
     def _prepare_text_for_embedding(self, text: str, task: str = "text_search", custom_instruction: Optional[str] = None) -> str:
         """
@@ -123,18 +113,13 @@ class Qwen3_0_6B_EmbeddingAPI:
         
         if MODEL_CONFIG["supports_instructions"]:
             # Use custom instruction if provided, otherwise use task-specific instruction
-            if custom_instruction:
-                instruction = custom_instruction
-            else:
-                instruction = instruction_map.get(task, instruction_map["text_search"])
+            instruction = custom_instruction or instruction_map.get(task, instruction_map["text_search"])
             
             # Qwen3-Embedding optimal format: Instruction + Text
-            formatted_text = f"{instruction}\n{text}"
-        else:
-            # Fallback for non-instruction models
-            formatted_text = text
-            
-        return formatted_text
+            return f"{instruction}\n{text}"
+        
+        # Fallback for non-instruction models
+        return text
     
     def _normalize_embedding(self, embedding: List[float]) -> List[float]:
         """Normalize embedding vector (Ollama doesn't auto-normalize)"""
@@ -177,76 +162,73 @@ class Qwen3_0_6B_EmbeddingAPI:
             return (np_embedding / norm).tolist()
         return truncated
 
-    def _generate_single_embedding(
+    async def _generate_single_embedding(
         self, 
         text: str, 
-        task: str = "text_search",
-        custom_instruction: Optional[str] = None,
-        target_dimensions: Optional[int] = None,
-        use_cache: bool = True
+        task: str,
+        custom_instruction: Optional[str],
+        target_dimensions: Optional[int]
     ) -> List[float]:
-        """Generate embedding for a single text with Qwen developer recommendations"""
+        """Generate embedding for a single text asynchronously."""
         # Check cache first
-        if use_cache:
-            cache_key = self._get_cache_key(f"{text}|{task}|{custom_instruction}|{target_dimensions}")
-            cached_embedding = self._load_from_cache(cache_key)
-            if cached_embedding is not None:
-                return cached_embedding
+        cache_key = self._get_cache_key(text, task, custom_instruction, target_dimensions)
+        cached_embedding = self.cache.get(cache_key)
+        if cached_embedding is not None:
+            return cached_embedding
         
         # Prepare text with instruction-aware formatting (1-5% improvement)
         formatted_text = self._prepare_text_for_embedding(text, task, custom_instruction)
         
-        # Generate embedding via Ollama
+        # Generate embedding via Ollama asynchronously
         try:
-            response = requests.post(
+            response = await self.client.post(
                 f"{self.ollama_url}/api/embeddings",
                 json={
                     "model": self.model_name,
                     "prompt": formatted_text
-                },
-                timeout=30
+                }
             )
             
-            if response.status_code == 200:
-                result = response.json()
-                embedding = result.get("embedding", [])
-                
-                # Validate dimensions
-                if len(embedding) != self.dimensions:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Expected {self.dimensions} dimensions, got {len(embedding)}"
-                    )
-                
-                # Normalize embedding
-                normalized_embedding = self._normalize_embedding(embedding)
-                
-                # Apply MRL truncation if requested (Qwen developer feature)
-                if target_dimensions and MODEL_CONFIG["supports_mrl"]:
-                    normalized_embedding = self._apply_mrl_truncation(normalized_embedding, target_dimensions)
-                
-                # Cache result
-                if use_cache:
-                    self._save_to_cache(cache_key, normalized_embedding)
-                
-                return normalized_embedding
-            else:
-                # Parse Ollama error response
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get("error", response.text)
-                except:
-                    error_msg = response.text
-                
+            response.raise_for_status() # Raise exception for 4xx or 5xx status codes
+            
+            result = response.json()
+            embedding = result.get("embedding", [])
+            
+            # Validate dimensions
+            if len(embedding) != self.dimensions:
                 raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Ollama API error: {error_msg}"
+                    status_code=500,
+                    detail=f"Expected {self.dimensions} dimensions, got {len(embedding)}"
                 )
-                
-        except requests.RequestException as e:
+            
+            # Normalize embedding
+            normalized_embedding = self._normalize_embedding(embedding)
+            
+            # Apply MRL truncation if requested (Qwen developer feature)
+            if target_dimensions and MODEL_CONFIG["supports_mrl"]:
+                normalized_embedding = self._apply_mrl_truncation(normalized_embedding, target_dimensions)
+            
+            # Cache result
+            self.cache[cache_key] = normalized_embedding
+            
+            return normalized_embedding
+            
+        except httpx.HTTPStatusError as e:
+            # Parse Ollama error response more gracefully
+            try:
+                error_data = e.response.json()
+                error_msg = error_data.get("error", e.response.text)
+            except json.JSONDecodeError:
+                error_msg = e.response.text
+            
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Ollama API error: {error_msg}"
+            )
+        except httpx.RequestError as e:
             raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
     
-    def generate_embeddings(
+    async def generate_embeddings(
         self, 
         texts: List[str], 
         encoding_format: str = "float",
@@ -254,44 +236,52 @@ class Qwen3_0_6B_EmbeddingAPI:
         custom_instruction: Optional[str] = None,
         target_dimensions: Optional[int] = None
     ) -> EmbeddingResponse:
-        """Generate embeddings with Qwen developer recommendations (instruction-aware + MRL)"""
-        start_time = time.time()
-        embeddings = []
-        total_tokens = 0
+        """
+        Generate embeddings asynchronously with parallel processing for batches.
+        Uses Qwen developer recommendations (instruction-aware + MRL).
+        """
+        total_tokens = sum(len(text) // 4 for text in texts)
         
-        for i, text in enumerate(texts):
-            try:
-                # Get embedding with instruction-aware formatting and MRL support
-                float_embedding = self._generate_single_embedding(
-                    text=text,
-                    task=task,
-                    custom_instruction=custom_instruction,
-                    target_dimensions=target_dimensions
-                )
-                
-                # Convert to requested format
-                if encoding_format == "base64":
-                    # RooCode expects base64-encoded Float32Array
-                    embedding_data = self._encode_embedding_as_base64(float_embedding)
-                else:
-                    # Default float format
-                    embedding_data = float_embedding
-                
-                embeddings.append(EmbeddingData(
-                    embedding=embedding_data,
-                    index=i
-                ))
-                # Rough token estimation (1 token ≈ 4 characters)
-                total_tokens += len(text) // 4
-                
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to generate embedding for text {i}: {str(e)}"
-                )
+        # Create a list of coroutines to be executed in parallel
+        tasks = [
+            self._generate_single_embedding(
+                text=text,
+                task=task,
+                custom_instruction=custom_instruction,
+                target_dimensions=target_dimensions
+            )
+            for text in texts
+        ]
+        
+        # Execute all embedding tasks concurrently
+        try:
+            float_embeddings = await asyncio.gather(*tasks)
+        except Exception as e:
+             # Re-raise exceptions from _generate_single_embedding as they are already HTTPException
+            if isinstance(e, HTTPException):
+                raise e
+            # Wrap other unexpected errors in a generic 500 error
+            raise HTTPException(
+                status_code=500,
+                detail=f"An unexpected error occurred during batch processing: {str(e)}"
+            )
+
+        # Process results
+        embedding_data_list = []
+        for i, float_embedding in enumerate(float_embeddings):
+            if encoding_format == "base64":
+                # RooCode expects base64-encoded Float32Array
+                embedding_value = self._encode_embedding_as_base64(float_embedding)
+            else:
+                embedding_value = float_embedding
+            
+            embedding_data_list.append(EmbeddingData(
+                embedding=embedding_value,
+                index=i
+            ))
         
         return EmbeddingResponse(
-            data=embeddings,
+            data=embedding_data_list,
             model=self.model_name,
             usage=Usage(
                 prompt_tokens=total_tokens,
@@ -302,12 +292,17 @@ class Qwen3_0_6B_EmbeddingAPI:
 # FastAPI app setup
 app = FastAPI(
     title="qwen3",
-    description="OpenAI-compatible API for Qwen3-Embedding-0.6B model",
-    version="1.0.0"
+    description="OpenAI-compatible API for Qwen3-Embedding-0.6B model, now with async processing.",
+    version="1.1.0"
 )
 
-# Initialize API
+# Initialize API with a persistent client
 embedding_api = Qwen3_0_6B_EmbeddingAPI()
+
+@app.on_event("shutdown")
+async def app_shutdown():
+    """Close the httpx client gracefully on shutdown."""
+    await embedding_api.client.aclose()
 
 @app.get("/")
 async def root():
@@ -319,6 +314,8 @@ async def root():
         "max_context": MODEL_CONFIG["max_context_length"],
         "use_case": MODEL_CONFIG["use_case"],
         "features": [
+            "Async processing with parallel batch support",
+            "In-memory caching (10-minute TTL)",
             "OpenAI-compatible /v1/embeddings endpoint",
             "Base64 encoding support (encoding_format: base64)",
             "Float array support (encoding_format: float)", 
@@ -335,20 +332,23 @@ async def health_check():
     """Health check endpoint"""
     try:
         # Test connection to Ollama
-        response = requests.get(f"{embedding_api.ollama_url}/api/tags", timeout=5)
-        if response.status_code == 200:
-            models = response.json().get("models", [])
-            model_available = any(model["name"] == embedding_api.model_name for model in models)
-            
-            return {
-                "status": "healthy",
-                "model_available": model_available,
-                "model_name": embedding_api.model_name,
-                "dimensions": embedding_api.dimensions,
-                "timestamp": time.time()
-            }
-        else:
-            return {"status": "unhealthy", "reason": "Ollama not responding"}
+        response = await embedding_api.client.get(f"{embedding_api.ollama_url}/api/tags")
+        response.raise_for_status()
+        
+        models = response.json().get("models", [])
+        model_available = any(m["name"] == embedding_api.model_name for m in models)
+        
+        return {
+            "status": "healthy",
+            "model_available": model_available,
+            "model_name": embedding_api.model_name,
+            "dimensions": embedding_api.dimensions,
+            "timestamp": time.time()
+        }
+    except httpx.RequestError as e:
+        return {"status": "unhealthy", "reason": f"Ollama connection failed: {e}"}
+    except httpx.HTTPStatusError as e:
+        return {"status": "unhealthy", "reason": f"Ollama API error: {e.response.status_code}"}
     except Exception as e:
         return {"status": "unhealthy", "reason": str(e)}
 
@@ -356,21 +356,14 @@ async def health_check():
 async def create_embeddings(request: EmbeddingRequest):
     """Create embeddings (OpenAI-compatible endpoint)"""
     # Normalize input to list
-    if isinstance(request.input, str):
-        texts = [request.input]
-    else:
-        texts = request.input
+    texts = [request.input] if isinstance(request.input, str) else request.input
     
     # Validate input
-    if not texts:
-        raise HTTPException(status_code=400, detail="Input cannot be empty")
+    if not texts or any(not text.strip() for text in texts):
+        raise HTTPException(status_code=400, detail="Input cannot be empty or contain empty strings")
     
-    # Check for empty strings
-    if any(not text.strip() for text in texts):
-        raise HTTPException(status_code=400, detail="Input cannot contain empty strings")
-    
-    if len(texts) > 100:  # Reasonable batch limit
-        raise HTTPException(status_code=400, detail="Too many texts in batch (max 100)")
+    if len(texts) > 256:  # Increased reasonable batch limit for async processing
+        raise HTTPException(status_code=400, detail="Too many texts in batch (max 256)")
     
     # Validate encoding format
     if request.encoding_format not in ["float", "base64"]:
@@ -388,7 +381,7 @@ async def create_embeddings(request: EmbeddingRequest):
         )
     
     # Generate embeddings with Qwen developer recommendations
-    return embedding_api.generate_embeddings(
+    return await embedding_api.generate_embeddings(
         texts=texts,
         encoding_format=request.encoding_format,
         task=request.task or "text_search",
@@ -430,7 +423,7 @@ async def list_models():
     }
 
 if __name__ == "__main__":
-    print(f"🚀 Starting Qwen3-Embedding-0.6B API server...")
+    print(f"🚀 Starting ASYNC Qwen3-Embedding-0.6B API server...")
     print(f"📊 Model: {MODEL_CONFIG['model_name']}")
     print(f"📏 Dimensions: {MODEL_CONFIG['dimensions']}")
     print(f"🎯 Use case: {MODEL_CONFIG['use_case']}")
