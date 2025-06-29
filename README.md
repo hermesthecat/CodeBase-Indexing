@@ -8,19 +8,21 @@ Qwen3-embedding has topped embedding benchmarks, easily beating both open and cl
 
 The setup scripts (`setup.sh` for Linux/macOS, `setup.ps1` for Windows) automate the entire process.
 
-1.  **Configure Environment:**
+1. **Configure Environment:**
     - The script will automatically create a `.env` file from the `.env.example` template if it doesn't exist.
     - **Before running the script**, you can review and edit the `.env` file to customize ports, API keys, etc.
 
-2.  **Run the Script:**
+2. **Run the Script:**
 
     For Linux or macOS:
+
     ```bash
     # One-command setup: downloads model, optimizes, and configures everything
     ./setup.sh
     ```
 
     For Windows (in PowerShell):
+
     ```powershell
     # Make sure execution policy allows running scripts
     # Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -38,11 +40,12 @@ This automated script:
 
 ## Manual Setup (Advanced Users)
 
-1.  **Create Configuration File:**
+1. **Create Configuration File:**
     - Copy `.env.example` to `.env`.
     - Edit the `.env` file with your desired settings (API keys, ports, etc.).
 
-2.  **Download and Optimize Model:**
+2. **Download and Optimize Model:**
+
     ```bash
     # Pull the recommended model
     ollama pull hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0
@@ -51,7 +54,8 @@ This automated script:
     python optimize_gguf.py hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0 qwen3-embedding
     ```
 
-3.  **Install Dependencies and Start Services:**
+3. **Install Dependencies and Start Services:**
+
     ```bash
     # Install dependencies
     pip install -r requirements.txt
@@ -65,12 +69,12 @@ This automated script:
     python qwen3-api.py
     ```
 
-4.  **Setup Vector Database:**
+4. **Setup Vector Database:**
+
     ```bash
     # This script also reads from .env to connect to the services
     python qdrantsetup.py
     ```
-
 
 **Ready to use with RooCode!** The setup script displays the exact configuration values needed.
 
