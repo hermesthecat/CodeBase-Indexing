@@ -15,6 +15,7 @@ from qdrant_client.http.models import (
 )
 import uuid
 import logging
+import httpx
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,32 +48,34 @@ class OptimizedQdrantVectorStore:
         self.embedding_api_url = embedding_api_url
         self.collection_name = collection_name
         self.vector_size = 1024  # Qwen3-0.6B embedding size
+        self.client = httpx.Client(timeout=60.0) # Use a synchronous client for this script
         
-    def get_embedding(self, text: str) -> List[float]:
-        """Get embedding from your RooCode-compatible Qwen3-0.6B API"""
+    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Get embeddings for a batch of texts from the API."""
         try:
-            # Use RooCode-compatible request format
-            response = requests.post(
+            response = self.client.post(
                 f"{self.embedding_api_url}/v1/embeddings",
                 json={
-                    "input": text,
+                    "input": texts,
                     "model": "qwen3-embedding",
-                    "encoding_format": "float"  # Use float format for Qdrant
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
+                    "encoding_format": "float"
+                }
             )
             response.raise_for_status()
             result = response.json()
             
-            # Extract embedding from OpenAI-compatible response
-            if "data" in result and len(result["data"]) > 0:
-                return result["data"][0]["embedding"]
-            else:
-                raise ValueError("Invalid response format from embedding API")
-                
+            # Extract embeddings from OpenAI-compatible response, maintaining order
+            embeddings = [None] * len(texts)
+            for item in result["data"]:
+                embeddings[item["index"]] = item["embedding"]
+            
+            if None in embeddings:
+                raise ValueError("Mismatch in embedding response count")
+            
+            return embeddings
+
         except Exception as e:
-            logger.error(f"Failed to get embedding: {e}")
+            logger.error(f"Failed to get embeddings for batch: {e}")
             raise
     
     def create_optimized_collection(self):
@@ -160,7 +163,8 @@ class OptimizedQdrantVectorStore:
         })
         
         try:
-            embedding = self.get_embedding(text)
+            # Use the new batch method for a single item
+            embedding = self.get_embeddings_batch([text])[0]
             
             point = PointStruct(
                 id=str(point_id),  # Convert UUID to string
@@ -183,73 +187,72 @@ class OptimizedQdrantVectorStore:
     def add_documents_batch(
         self, 
         documents: List[Dict[str, Any]], 
-        batch_size: int = 100
+        batch_size: int = 64  # Adjusted batch size for optimal API throughput
     ) -> List[str]:
-        """Add multiple documents in optimized batches"""
-        doc_ids = []
+        """Add multiple documents in optimized batches using a single API call per batch."""
+        all_doc_ids = []
         
         # Process in batches for efficiency
         for i in range(0, len(documents), batch_size):
-            batch = documents[i:i + batch_size]
-            batch_points = []
-            batch_ids = []
+            batch_docs = documents[i:i + batch_size]
+            batch_texts = [doc["text"] for doc in batch_docs]
             
-            logger.info(f"Processing batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1}")
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1} with {len(batch_texts)} documents...")
             
-            for doc in batch:
-                doc_id = doc.get("id")
-                text = doc["text"]
-                metadata = doc.get("metadata", {})
+            try:
+                # Get all embeddings for the current batch with a single API call
+                batch_embeddings = self.get_embeddings_batch(batch_texts)
                 
-                # Generate UUID from string ID or create new UUID
-                if doc_id is None:
-                    point_id = uuid.uuid4()
-                    doc_id = str(point_id)
-                else:
-                    # Convert string ID to UUID deterministically
-                    import hashlib
-                    hash_object = hashlib.md5(str(doc_id).encode())
-                    point_id = uuid.UUID(hash_object.hexdigest())
+                batch_points = []
+                batch_ids = []
                 
-                # Add standard metadata
-                metadata.update({
-                    "text": text,
-                    "text_length": len(text),
-                    "indexed_at": time.time(),
-                    "word_count": len(text.split()),
-                    "original_doc_id": doc_id
-                })
-                
-                try:
-                    embedding = self.get_embedding(text)
+                # Pair original documents with their new embeddings
+                for doc, embedding in zip(batch_docs, batch_embeddings):
+                    doc_id = doc.get("id")
+                    metadata = doc.get("metadata", {})
+                    
+                    # Generate UUID from string ID or create new UUID
+                    if doc_id is None:
+                        point_id = uuid.uuid4()
+                        doc_id = str(point_id)
+                    else:
+                        import hashlib
+                        hash_object = hashlib.md5(str(doc_id).encode())
+                        point_id = uuid.UUID(hash_object.hexdigest())
+                    
+                    # Add standard metadata
+                    metadata.update({
+                        "text": doc["text"],
+                        "text_length": len(doc["text"]),
+                        "indexed_at": time.time(),
+                        "word_count": len(doc["text"].split()),
+                        "original_doc_id": doc_id
+                    })
                     
                     point = PointStruct(
-                        id=str(point_id),  # Convert UUID to string
+                        id=str(point_id),
                         vector=embedding,
                         payload=metadata
                     )
                     
                     batch_points.append(point)
                     batch_ids.append(doc_id)
-                    
-                except Exception as e:
-                    logger.error(f"Failed to process document {doc_id}: {e}")
-                    continue
-            
-            # Upsert batch
-            if batch_points:
-                try:
+                
+                # Upsert the entire batch to Qdrant
+                if batch_points:
                     self.qdrant.upsert(
                         collection_name=self.collection_name,
                         points=batch_points
                     )
-                    doc_ids.extend(batch_ids)
-                    logger.info(f"✅ Added batch of {len(batch_points)} documents")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to upsert batch: {e}")
+                    all_doc_ids.extend(batch_ids)
+                    logger.info(f"✅ Added batch of {len(batch_points)} documents to Qdrant.")
+            
+            except Exception as e:
+                logger.error(f"Failed to process or upsert batch starting at index {i}: {e}")
+                # Optionally, you can decide to continue with the next batch or stop
+                continue
         
-        return doc_ids
+        return all_doc_ids
     
     def search(
         self, 
@@ -260,7 +263,8 @@ class OptimizedQdrantVectorStore:
     ) -> List[Dict[str, Any]]:
         """Enhanced search with filtering and threshold"""
         try:
-            query_embedding = self.get_embedding(query)
+            # Get embedding for the query using the batch method
+            query_embedding = self.get_embeddings_batch([query])[0]
             
             # Build filter if provided
             search_filter = None
@@ -386,7 +390,9 @@ if __name__ == "__main__":
     # Test embedding API connectivity first
     print("\n🔌 Testing embedding API connectivity...")
     try:
-        test_embedding = vs.get_embedding("test connection")
+        # Test with the new batch method
+        test_embedding_batch = vs.get_embeddings_batch(["test connection"])
+        test_embedding = test_embedding_batch[0]
         print(f"✅ Embedding API connected - Vector size: {len(test_embedding)}")
         print(f"   Expected size: {vs.vector_size}")
         if len(test_embedding) != vs.vector_size:
@@ -455,7 +461,7 @@ if __name__ == "__main__":
     print("=" * 50)
     
     for query in test_queries:
-        print(f"\n� Query: '{query}'")
+        print(f"\n🔍 Query: '{query}'")
         results = vs.search(query, limit=3, score_threshold=0.3)  # Lowered threshold
         
         if results:
