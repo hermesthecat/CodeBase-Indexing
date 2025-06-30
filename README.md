@@ -4,6 +4,8 @@ Qwen3-embedding has topped embedding benchmarks, easily beating both open and cl
 
 **🎯 Fully RooCode Compatible!** - Works seamlessly with [Cline](https://github.com/cline/cline) and its tributaries including Roo, KiloCode.
 
+## forked from https://github.com/OJamals/Modal
+
 ## Automated Setup (Recommended)
 
 The entire environment can be managed using Docker Compose, which is the simplest and recommended method.
